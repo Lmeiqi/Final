@@ -1,0 +1,254 @@
+---
+title: "ADA Final Project"
+author: "Meiqi Liu"
+date: "2022-12-01"
+output: html_document
+---
+
+# Load and library packages
+```{r}
+pacman::p_load(haven, dplyr, odds.n.ends, blorr, lmtest, car,  broom, tidyverse, jtools, table1, DiagrammeR) 
+```
+
+# Import sav dataset
+```{r}
+HINTS <- read_sav("D:/wustl/ADAProject/hints5_cycle4_public.sav")
+```
+
+# Select variables
+```{r}
+# get head of dataset
+head(HINTS)
+
+# select variables we need
+HINTS0 <- HINTS %>% 
+  select(2,286,314,315,317,424,427)
+```
+
+# Rename variables
+```{r}
+HINTS0<-HINTS0 %>% 
+  rename("ID"=1, "Sex"=4, "Employ"=5, "Educ"=6, "RaceEth"=7)
+```
+
+# Target population: women in 40-65
+```{r}
+# age: 40-65
+HINT4065<-subset(HINTS0, HINTS0$Age>39 & HINTS0$Age<66)
+
+# sex: female
+FEMALE4065<-subset(HINT4065, HINT4065$Sex==2)
+```
+
+# Summary dataset
+```{r}
+summary(FEMALE4065)
+```
+# Recode Sex
+```{r}
+FEMALE4065$Sex<-factor(FEMALE4065$Sex, 2:2, c("Female"))
+```
+
+# Recode Breast cancer
+```{r}
+FEMALE4065<-FEMALE4065 %>% 
+  mutate(BreastCan = case_when(CaBreast==1~1,
+                               CaBreast==2~0),
+         BreastCan = factor(BreastCan, 0:1, c("Not Diagnosed Breast Cancer", "Diagnosed Breast Cancer")))
+
+table(FEMALE4065$CaBreast, FEMALE4065$BreastCan, useNA = "always")
+```
+
+# Recode Employment
+```{r}
+FEMALE4065<-FEMALE4065 %>% 
+  mutate(Employment = case_when(Employ==2~0,
+                                Employ==1~1),
+         Employment = factor(Employment, 0:1, c("No","Yes")))
+
+table(FEMALE4065$Employ,FEMALE4065$Employment, useNA = "always")
+```
+
+# Recode Educ
+```{r}
+FEMALE4065<-FEMALE4065 %>% 
+  mutate(Educ = na_if(Educ,-9),
+         Educ = factor(Educ, 1:4, c("Less than High school", "High school Graduate", "Some College", "College Graduate or more")))
+```
+
+# Recode Race/Ethnicity
+```{r}
+FEMALE4065<-FEMALE4065 %>% 
+  mutate(RaceEthnicity = na_if(RaceEth, -9),
+         RaceEthnicity = factor(RaceEthnicity, 1:5, c("Non-Hispanic White", "Non-Hispanic Black or African American", "Hispanic","Non-Hispanic Asian","Non-Hispanic Other")))
+```
+
+# Drop NAs
+```{r}
+HINTS1<-FEMALE4065 %>% 
+  select(1,3,4,6,8,9,10) %>% 
+  drop_na()
+```
+
+# Summary dataset
+```{r}
+summary(HINTS1)
+```
+
+# Figure 1: shows exclusions to arrive at the analytic dataset
+```{r}
+grViz("digraph flowchart {
+
+      node [fontname = Helvetica, shape = rectangle, fontsize=10] 
+      
+      tab1 [label = '@@1'] # starting
+      tab2 [label = '@@2'] # exclusion 1
+      tab3 [label = '@@3'] # exclusion 2
+      tab4 [label = '@@4'] # exclusion 3
+      
+      tab1 -> tab2 -> tab3 -> tab4
+}
+     
+      [1]: 'Records received from HINTS n=3,865'
+      [2]: 'Excluding 2,122 individuals not aged in 40-65 n=1,743'
+      [3]: 'Excluding 721 male individuals n=1,022'
+      [4]: 'Excluding 889 individuals with missing data on variables used in the analysis n=133'
+      ")
+```
+
+# table 1
+```{r}
+label(HINTS1$Age)<-"Age (years)"
+label(HINTS1$Sex)<-"Sex"
+label(HINTS1$Educ)<-"Educational Level"
+label(HINTS1$BreastCan)<-"Breast Cancer Diagnosis"
+label(HINTS1$RaceEthnicity)<-"Race/Ethnicity"
+table1(~Age+Sex+Educ++RaceEthnicity+Employment|BreastCan, overall="Total", rowlabelhead="Variable", footnote='SD = standard deviation', HINTS1)
+```
+
+# Regroup strata have <10 counts
+```{r}
+# education
+HINTS1<-HINTS1 %>% 
+  mutate (Education = if_else(Educ %in% c("Less than High school", "High school Graduate"),0,
+                              if_else (Educ=="Some College",1,
+                                       if_else(Educ=="College Graduate or more",2, NULL))))
+HINTS1$Education<-factor(HINTS1$Education, levels = c(0:2), labels = c("Less than College","Some College", "College Graduate or more"))
+
+# check
+table(HINTS1$Education, HINTS1$Educ,useNA="always")
+
+# race/ethnicity
+HINTS1<-HINTS1 %>% 
+  mutate (EthRace = if_else(RaceEthnicity == "Non-Hispanic White",0,
+                            if_else(RaceEthnicity %in% c("Non-Hispanic Black or African American", "Non-Hispanic Asian","Non-Hispanic Other"),1,
+                                                         if_else(RaceEthnicity == "Hispanic",2, NULL))))
+HINTS1$EthRace<-factor(HINTS1$EthRace,levels = c(0:2), labels = c("Non-Hispanic White","Non-Hispanic African American/Asian/Other", "Hispanic"))
+
+# check
+table(HINTS1$RaceEthnicity,HINTS1$EthRace,useNA="always")
+```
+
+# Table 1 after regroup
+```{r}
+label(HINTS1$Education)<- "Educational level"
+label(HINTS1$EthRace)<-"Race & Ethnicity"
+table1(~Age+Sex+Education+EthRace+Employment|BreastCan, overall="Total", rowlabelhead="Variable", footnote='SD = standard deviation', HINTS1)
+# Those who were diagnosed breast cancer were older than those who weren't diagnosed breast cancer with a mean age of 57.2 (SD = 6.4) and a median age of 59.
+```
+
+# univariate logistic regression of association between breastcancer diagnosis and employment
+```{r}
+model1<-glm(Employment ~ BreastCan, data=HINTS1, family= "binomial")
+summary(model1)
+odds.n.ends(model1)
+```
+
+## Test the linearity assumption for age using the Box Tidwell test.
+```{r}
+# create term to test linearity
+HINTS1<-HINTS1 %>% 
+  mutate(age.times.logage = Age*log(Age))
+
+modelagelog<-glm(Employment ~ Age+age.times.logage, data=HINTS1, family= "binomial")
+summary(modelagelog)
+# p < .05 coefficient means the assumption is violated
+```
+
+# Recode age into age group
+```{r}
+HINTS1<-HINTS1 %>% 
+  mutate(agegroup = case_when(Age>=40&Age<45~0,
+                              Age>=45&Age<50~1,
+                              Age>=50&Age<55~2,
+                              Age>=55&Age<60~3,
+                              Age>=60&Age<=65~4),
+         agegroup = factor(agegroup,0:4, c("Age 40-45","Age 45-50","Age 50-55","Age 55-60","Age 60-65")))
+
+summary(HINTS1$agegroup)
+```
+
+# logistic regression with confounders: age, race, education
+```{r}
+model2<-glm(Employment ~ BreastCan+agegroup+EthRace+Education,data=HINTS1, family= "binomial")
+summary(model2)
+odds.n.ends(model2)
+```
+
+# compare the adjusted model with the original model
+```{r}
+lrtest(model1, model2)
+# significant
+```
+
+# Assumptions of multicollinearity using the vif function
+```{r}
+summ(model2, vifs = TRUE)
+# VIF is quite small, the assumptions of multicollinearity met.
+```
+
+# look for influential observations using Cook's distance
+```{r}
+# plot
+plot(model2, which = 4, id.n = 3, col="red") 
+```
+
+# if exclude influential observations
+```{r}
+# get Cook's D
+model2.data<-augment(model2) %>% 
+  mutate(index = 1:n())
+
+# Calculate cutoff and assign to object
+cuttoff <- mean(model2.data$.cooksd)*3
+
+# Exclude observations with values greater than the cutoff
+HINTS_out<- model2.data %>%
+  filter(.cooksd<cuttoff)
+
+# new model without influential observations
+model3<-glm(Employment ~ BreastCan+agegroup+EthRace+Education,data=HINTS_out, family= "binomial")
+summary(model3)
+odds.n.ends(model3)
+
+# compare
+compareCoefs(model2, model3)
+
+# sample size is too small, so not exclude influential observations.
+```
+
+# evaluate model classification performance 
+```{r}
+odds.n.ends(model2, predProbPlot=TRUE, rocPlot=TRUE)
+```
+
+# effect modification
+```{r}
+# with interaction term
+model4<-glm(Employment ~ BreastCan+agegroup+EthRace+Education+EthRace*BreastCan,data=HINTS1, family= "binomial")
+summary(model4)
+
+# compare
+lrtest(model2, model4)
+# non-significant
+```
